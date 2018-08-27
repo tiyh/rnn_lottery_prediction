@@ -24,11 +24,11 @@ class RNN(tf.keras.Model):
   Similar to tf.nn.static_rnn, implemented as a class.
   """
 
-  def __init__(self, hidden_dim, num_layers, keep_ratio):
+  def __init__(self, hidden_dim, num_layers, keep_ratio, forget_bias):
     super(RNN, self).__init__()
     self.keep_ratio = keep_ratio
     self.cells = tf.contrib.checkpoint.List([
-        tf.nn.rnn_cell.BasicLSTMCell(num_units=hidden_dim)
+        tf.nn.rnn_cell.BasicLSTMCell(num_units=hidden_dim,forget_bias=forget_bias)
         for _ in range(num_layers)
     ])
 
@@ -83,7 +83,8 @@ class LSTMModel(tf.keras.Model):
                hidden_dim,
                num_layers,
                dropout_ratio,
-               use_cudnn_rnn=True):
+               use_cudnn_rnn=True,
+               forget_bias=0.2):
     super(LSTMModel, self).__init__()
 
     self.keep_ratio = 1 - dropout_ratio
@@ -94,7 +95,7 @@ class LSTMModel(tf.keras.Model):
       self.rnn = cudnn_rnn.CudnnLSTM(
           num_layers, hidden_dim, dropout=dropout_ratio)
     else:
-      self.rnn = RNN(hidden_dim, num_layers, self.keep_ratio)
+      self.rnn = RNN(hidden_dim, num_layers, self.keep_ratio,forget_bias)
 
     self.linear = layers.Dense(
         vocab_size, kernel_initializer=tf.random_uniform_initializer(-0.1, 0.1))
@@ -190,7 +191,7 @@ class Datasets(object):
     self.idx2word = []  # integer id -> word string
     # Files represented as a list of integer ids (as opposed to list of string
     # words).
-    self.word2idx = { (str(int(num/11**4)%11+1) + str(int(num/11**3)%11+1).zfill(2) + str(int(num/11**2)%11+1).zfill(2) + str(int(num/11)%11+1).zfill(2) +str(num%11+1).zfill(2)) : num for num in range(11*11*11*11*11) }
+    self.word2idx = { (str(int(num/11**4)%11+1).zfill(2) + str(int(num/11**3)%11+1).zfill(2) + str(int(num/11**2)%11+1).zfill(2) + str(int(num/11)%11+1).zfill(2) +str(num%11+1).zfill(2)) : num for num in range(11*11*11*11*11) }
     if not FLAGS.predictpath :
       self.train = self.tokenize(os.path.join(path, "train.txt")) 
       self.valid = self.tokenize(os.path.join(path, "valid.txt"))
@@ -227,7 +228,6 @@ class Datasets(object):
       for line in f:
         words = line.strip()
         if(words!=''):
-            #print("token:%d for word:%d word2idx.len:%s\n" %(token, int(words),self.word2idx))
             myword = self.word2idx.get(words)
             ids[token] = myword
             token += 1
@@ -245,7 +245,7 @@ def predict(self):
                      pre_data.vocab_size(),
                      FLAGS.embedding_dim,
                      FLAGS.hidden_dim, FLAGS.num_layers, 0,
-                     False)
+                     False,0)
   optimizer = tf.train.GradientDescentOptimizer(learning_rate)
   checkpoint = tf.train.Checkpoint(
         learning_rate=learning_rate, model=model,
@@ -264,6 +264,17 @@ def predict(self):
   sys.stderr.write( "pred_class_index :%s \n"% pred_class_index )
   for i in pred_class_index:
     sys.stderr.write( "pred_num------------------index:%d- :%s \n"% (i,pre_data.get_key(i)) )
+
+  a,b = out.shape
+  lats_predict = out[a-1]
+  sys.stderr.write( "out[%d]-------------- :%s \n"% (a,out[a-1]) )
+  for i in range(3):
+    max_operator=tf.argmax(lats_predict, 0,output_type=tf.int64).numpy()
+    sys.stderr.write( "i th:%d-----operator: %d------nums :%s \n"% (i,max_operator,pre_data.get_key(max_operator)) )
+    part1 = lats_predict[:max_operator]
+    part2 = lats_predict[max_operator+1:]
+    val = tf.constant([-1.])
+    lats_predict = tf.concat([part1,val,part2], axis=0)
 
 
 def main(_):
@@ -286,7 +297,7 @@ def main(_):
                      corpus.vocab_size(),
                      FLAGS.embedding_dim,
                      FLAGS.hidden_dim, FLAGS.num_layers, FLAGS.dropout,
-                     use_cudnn_rnn)
+                     use_cudnn_rnn,0.2)
     optimizer = tf.train.GradientDescentOptimizer(learning_rate)
     checkpoint = tf.train.Checkpoint(
         learning_rate=learning_rate, model=model,
@@ -317,34 +328,32 @@ def main(_):
         sys.stderr.write("eval_loss did not reduce in this epoch, "
                          "changing learning rate to %f for the next epoch\n" %
                          learning_rate.numpy())
-      sys.stderr.write( "one epoch :%f"% (best_loss))
+      sys.stderr.write( "one epoch,best_loss: :%f \n"% (best_loss))
 
 if __name__ == "__main__":
   parser = argparse.ArgumentParser()
   parser.add_argument(
       "--data-path",
       type=str,
-      default="",
-      help="Data directory of the Penn Treebank dataset from "
-      "http://www.fit.vutbr.cz/~imikolov/rnnlm/simple-examples.tgz")
+      default="")
   parser.add_argument(
       "--predictpath", type=str, default="", help="Directory for checkpoint.")
   parser.add_argument(
       "--logdir", type=str, default="/tmp/tf/", help="Directory for checkpoint.")
-  parser.add_argument("--epoch", type=int, default=5, help="Number of epochs.")
-  parser.add_argument("--batch-size", type=int, default=78, help="Batch size.")
+  parser.add_argument("--epoch", type=int, default=20, help="Number of epochs.")
+  parser.add_argument("--batch-size", type=int, default=256, help="Batch size.")
   parser.add_argument(
-      "--seq-len", type=int, default=15, help="Sequence length.")
+      "--seq-len", type=int, default=8, help="Sequence length.")
   parser.add_argument(
-      "--embedding-dim", type=int, default=100, help="Embedding dimension.")
+      "--embedding-dim", type=int, default=50, help="Embedding dimension.")
   parser.add_argument(
-      "--hidden-dim", type=int, default=100, help="Hidden layer dimension.")
+      "--hidden-dim", type=int, default=50, help="Hidden layer dimension.")
   parser.add_argument(  
       "--num-layers", type=int, default=2, help="Number of RNN layers.")
   parser.add_argument(
       "--dropout", type=float, default=0.2, help="Drop out ratio.")
   parser.add_argument(
-      "--clip", type=float, default=0.25, help="Gradient clipping ratio.")
+      "--clip", type=float, default=0.2, help="Gradient clipping ratio.")
   parser.add_argument(
       "--no-use-cudnn-rnn",
       action="store_true",
