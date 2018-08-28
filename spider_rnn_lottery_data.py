@@ -11,10 +11,13 @@ import time
 class Ticai:   
     def __init__(self):
         self.number = []  
-    def ticai_crawl(self,url):  
-	req = urllib2.Request(url)    
-        response = urllib2.urlopen(req) 
-        self.deal_data(response.read().decode('utf8'))
+    def ticai_crawl(self,url):    
+        req = urllib2.Request(url)
+        try:
+            response = urllib2.urlopen(req,timeout=20)
+            self.deal_data(response.read().decode('utf8'))
+        except:
+            print "timeout:url:"+url
     def deal_data(self,myPage): 
 	myqiItems =  re.findall('<div.*?class="pig-uul-ll">(.*?)</div>\s</div>\s</div>',myPage,re.S)
         for qiItems in myqiItems:
@@ -57,9 +60,17 @@ if __name__ == '__main__':
     ticai = Ticai()
 
     url =r'http://wap.sdticai.com/index.php?g=Portal&m=Index&a=lottery_history&id=9&pageindex='
-    for i in range(1,10): 
+    for i in range(9,5000): 
         ticai.ticai_crawl(url+str(i))
-        time.sleep(0.03)
+        time.sleep(0.1)
+    time.sleep(60)
+    for i in range(4999,10000): 
+        ticai.ticai_crawl(url+str(i))
+        time.sleep(0.1)
+    time.sleep(60)
+    for i in range(9999,20000): 
+        ticai.ticai_crawl(url+str(i))
+        time.sleep(0.1)
     db.close()
 '''
 create table rnnlottery (
