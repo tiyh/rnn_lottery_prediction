@@ -191,7 +191,7 @@ class Datasets(object):
     self.idx2word = []  # integer id -> word string
     # Files represented as a list of integer ids (as opposed to list of string
     # words).
-    self.word2idx = { (str(int(num/11**4)%11+1).zfill(2) + str(int(num/11**3)%11+1).zfill(2) + str(int(num/11**2)%11+1).zfill(2) + str(int(num/11)%11+1).zfill(2) +str(num%11+1).zfill(2)) : num for num in range(11*11*11*11*11) }
+    self.word2idx = { (str(int(num/11**4)%11+1) + str(int(num/11**3)%11+1).zfill(2) + str(int(num/11**2)%11+1).zfill(2) + str(int(num/11)%11+1).zfill(2) +str(num%11+1).zfill(2)) : num for num in range(11*11*11*11*11) }
     if not FLAGS.predictpath :
       self.train = self.tokenize(os.path.join(path, "train.txt")) 
       self.valid = self.tokenize(os.path.join(path, "valid.txt"))
@@ -246,10 +246,8 @@ def predict(self):
                      FLAGS.embedding_dim,
                      FLAGS.hidden_dim, FLAGS.num_layers, 0,
                      False,0)
-  optimizer = tf.train.GradientDescentOptimizer(learning_rate)
-  checkpoint = tf.train.Checkpoint(
-        learning_rate=learning_rate, model=model,
-        optimizer=optimizer)
+  #optimizer = tf.train.GradientDescentOptimizer(learning_rate)
+  checkpoint = tf.train.Checkpoint(model=model)
 
   checkpoint.restore(tf.train.latest_checkpoint(FLAGS.logdir))
   sys.stderr.write( "train_data--------------------------- :%s \n"% train_data )
@@ -292,12 +290,12 @@ def main(_):
   with tf.device("/device:GPU:0" if have_gpu else None):
     # Make learning_rate a Variable so it can be included in the checkpoint
     # and we can resume training with the last saved learning_rate.
-    learning_rate = tf.contrib.eager.Variable(20.0, name="learning_rate")
+    learning_rate = tf.contrib.eager.Variable(1.0, name="learning_rate")
     model = LSTMModel(
                      corpus.vocab_size(),
                      FLAGS.embedding_dim,
                      FLAGS.hidden_dim, FLAGS.num_layers, FLAGS.dropout,
-                     use_cudnn_rnn,0.2)
+                     use_cudnn_rnn,0.0)
     optimizer = tf.train.GradientDescentOptimizer(learning_rate)
     checkpoint = tf.train.Checkpoint(
         learning_rate=learning_rate, model=model,
@@ -341,13 +339,13 @@ if __name__ == "__main__":
   parser.add_argument(
       "--logdir", type=str, default="/tmp/tf/", help="Directory for checkpoint.")
   parser.add_argument("--epoch", type=int, default=20, help="Number of epochs.")
-  parser.add_argument("--batch-size", type=int, default=256, help="Batch size.")
+  parser.add_argument("--batch-size", type=int, default=16, help="Batch size.")
   parser.add_argument(
-      "--seq-len", type=int, default=8, help="Sequence length.")
+      "--seq-len", type=int, default=16, help="Sequence length.")
   parser.add_argument(
-      "--embedding-dim", type=int, default=50, help="Embedding dimension.")
+      "--embedding-dim", type=int, default=128, help="Embedding dimension.")
   parser.add_argument(
-      "--hidden-dim", type=int, default=50, help="Hidden layer dimension.")
+      "--hidden-dim", type=int, default=128, help="Hidden layer dimension.")
   parser.add_argument(  
       "--num-layers", type=int, default=2, help="Number of RNN layers.")
   parser.add_argument(
