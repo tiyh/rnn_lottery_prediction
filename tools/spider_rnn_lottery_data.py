@@ -60,9 +60,10 @@ if __name__ == '__main__':
     ticai = Ticai()
 
     url =r'http://wap.sdticai.com/index.php?g=Portal&m=Index&a=lottery_history&id=9&pageindex='
-    for i in range(9,5000): 
+    for i in range(15999,20000): 
         ticai.ticai_crawl(url+str(i))
         time.sleep(0.1)
+    '''
     time.sleep(60)
     for i in range(4999,10000): 
         ticai.ticai_crawl(url+str(i))
@@ -72,6 +73,7 @@ if __name__ == '__main__':
         ticai.ticai_crawl(url+str(i))
         time.sleep(0.1)
     db.close()
+    '''
 '''
 create table rnnlottery (
   id varchar(8)  primary key,
