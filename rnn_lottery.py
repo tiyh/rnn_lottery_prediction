@@ -14,6 +14,8 @@ import tensorflow as tf
 
 from tensorflow.contrib.cudnn_rnn.python.layers import cudnn_rnn
 from tensorflow.contrib.eager.python import tfe
+from itertools import combinations, permutations
+
 
 layers = tf.keras.layers
 
@@ -36,12 +38,13 @@ class RNN(tf.keras.Model):
     batch_size = int(input_seq.shape[1])
     for c in self.cells:
       state = c.zero_state(batch_size, tf.float32)
+      #state = tf.random_normal([batch_size,8], mean=0.0, stddev=1.0, dtype=tf.float32, seed=100)
+      
       outputs = []
       input_seq = tf.unstack(input_seq, num=int(input_seq.shape[0]), axis=0)
       for inp in input_seq:
         output, state = c(inp, state)
         outputs.append(output)
-
       input_seq = tf.stack(outputs, axis=0)
       if training:
         input_seq = tf.nn.dropout(input_seq, self.keep_ratio)
@@ -65,7 +68,7 @@ class Embedding(layers.Layer):
         "embedding_kernel",
         shape=[self.vocab_size, self.embedding_dim],
         dtype=tf.float32,
-        initializer=tf.random_uniform_initializer(-0.1, 0.1),
+        initializer=tf.keras.initializers.he_normal(), #tf.random_uniform_initializer(-0.1, 0.1),
         trainable=True)
 
   def call(self, x):
@@ -98,7 +101,7 @@ class LSTMModel(tf.keras.Model):
       self.rnn = RNN(hidden_dim, num_layers, self.keep_ratio,forget_bias)
 
     self.linear = layers.Dense(
-        vocab_size, kernel_initializer=tf.random_uniform_initializer(-0.1, 0.1))
+        vocab_size, kernel_initializer=tf.keras.initializers.he_normal()) #tf.random_uniform_initializer(-0.1, 0.1))
     self._output_shape = [-1, embedding_dim]
 
   def call(self, input_seq, training):
@@ -191,7 +194,18 @@ class Datasets(object):
     self.idx2word = []  # integer id -> word string
     # Files represented as a list of integer ids (as opposed to list of string
     # words).
-    self.word2idx = { (str(int(num/11**4)%11+1).zfill(2) + str(int(num/11**3)%11+1).zfill(2) + str(int(num/11**2)%11+1).zfill(2) + str(int(num/11)%11+1).zfill(2) +str(num%11+1).zfill(2)) : num for num in range(11*11*11*11*11) }
+
+    #permutations
+    #combinations
+    comblist = list(permutations([str(1).zfill(2),str(2).zfill(2),str(3).zfill(2),
+            str(4).zfill(2),str(5).zfill(2),str(6).zfill(2),
+            str(7).zfill(2),str(8).zfill(2),str(9).zfill(2),
+            str(10).zfill(2),str(11).zfill(2)], 5))
+    i = 0
+    for sublist in comblist:
+        self.word2idx["".join(sublist)] = i
+        i=i+1
+    #self.word2idx = { (str(int(num/11**4)%11+1).zfill(2) + str(int(num/11**3)%11+1).zfill(2) + str(int(num/11**2)%11+1).zfill(2) + str(int(num/11)%11+1).zfill(2) +str(num%11+1).zfill(2)) : num for num in range(11*11*11*11*11) }
     if not FLAGS.predictpath :
       self.train = self.tokenize(os.path.join(path, "train.txt")) 
       self.valid = self.tokenize(os.path.join(path, "valid.txt"))
@@ -203,7 +217,7 @@ class Datasets(object):
 
   def vocab_size(self):
     print("---------------vocab_size:%d\n" %(len(self.idx2word)))
-    return 11**5
+    return 11*10*9*8*7 #462
 
 
   def add(self, word):
@@ -345,15 +359,15 @@ if __name__ == "__main__":
   parser.add_argument(
       "--predictpath", type=str, default="", help="Directory for checkpoint.")
   parser.add_argument(
-      "--logdir", type=str, default="/tmp/tf/", help="Directory for checkpoint.")
+      "--logdir", type=str, default="/home/chris/workspace/rnn_lottery/savedmodel", help="Directory for checkpoint.")
   parser.add_argument("--epoch", type=int, default=80, help="Number of epochs.")
-  parser.add_argument("--batch-size", type=int, default=128, help="Batch size.")
+  parser.add_argument("--batch-size", type=int, default=64, help="Batch size.")
   parser.add_argument(
-      "--seq-len", type=int, default=8, help="Sequence length.")
+      "--seq-len", type=int, default=32, help="Sequence length.")
   parser.add_argument(
-      "--embedding-dim", type=int, default=128, help="Embedding dimension.")
+      "--embedding-dim", type=int, default=512, help="Embedding dimension.")
   parser.add_argument(
-      "--hidden-dim", type=int, default=128, help="Hidden layer dimension.")
+      "--hidden-dim", type=int, default=512, help="Hidden layer dimension.")
   parser.add_argument(  
       "--num-layers", type=int, default=2, help="Number of RNN layers.")
   parser.add_argument(
