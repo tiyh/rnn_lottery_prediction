@@ -41,10 +41,16 @@ class RNN(tf.keras.Model):
       #state = tf.random_normal([batch_size,8], mean=0.0, stddev=1.0, dtype=tf.float32, seed=100)
       
       outputs = []
+      notEmpty = False
       input_seq = tf.unstack(input_seq, num=int(input_seq.shape[0]), axis=0)
       for inp in input_seq:
         output, state = c(inp, state)
+        notEmpty = True
+      if notEmpty :
         outputs.append(output)
+      else:
+        sys.stderr.write("-------output==None----input_seq: %s \n " %
+                   (input_seq))
       input_seq = tf.stack(outputs, axis=0)
       if training:
         input_seq = tf.nn.dropout(input_seq, self.keep_ratio)
@@ -129,6 +135,8 @@ def clip_gradients(grads_and_vars, clip_ratio):
 def loss_fn(model, inputs, targets, training):
   labels = tf.reshape(targets, [-1])
   outputs = model(inputs, training=training)
+  #sys.stderr.write("-----------------labels %s \n outputs:%s\n" %
+  #                 (labels, outputs))
   return tf.reduce_mean(
       tf.nn.sparse_softmax_cross_entropy_with_logits(
           labels=labels, logits=outputs))
@@ -145,7 +153,7 @@ def _divide_into_batches(data, batch_size):
 def _get_batch(data, i, seq_len):
   slen = min(seq_len, data.shape[0] - 1 - i)
   inputs = data[i:i + slen, :]
-  target = data[i + 1:i + 1 + slen, :]
+  target = data[i + slen:i + 1 + slen, :]
   return tf.constant(inputs), tf.constant(target)
 
 
@@ -175,16 +183,22 @@ def train(model, optimizer, train_data, sequence_length, clip_ratio):
 
   total_time = 0
   for batch, i in enumerate(range(0, train_data.shape[0] - 1, sequence_length)):
-    train_seq, train_target = _get_batch(train_data, i, sequence_length)
-    start = time.time()
-    optimizer.apply_gradients(
-        clip_gradients(grads(train_seq, train_target), clip_ratio))
-    total_time += (time.time() - start)
-    if batch % 10 == 0:
-      time_in_ms = (total_time * 1000) / (batch + 1)
-      sys.stderr.write("batch %d: training loss %.2f, avg step time %d ms\n" %
-                       (batch, model_loss(train_seq, train_target).numpy(),
-                        time_in_ms))
+    for j in range(sequence_length): 
+      train_seq, train_target = _get_batch(train_data, i+j, sequence_length)
+      input_list = tf.unstack(train_seq, num=int(train_seq.shape[0]), axis=0)
+      if not input_list: 
+        sys.stderr.write("-------input_list==None----input_list: %s \n " %
+                   (input_list))
+        break
+      start = time.time()
+      optimizer.apply_gradients(
+          clip_gradients(grads(train_seq, train_target), clip_ratio))
+      total_time += (time.time() - start)
+      if batch % 10 == 0:
+        time_in_ms = (total_time * 1000) / (batch + 1)
+        sys.stderr.write("batch %d: training loss %.2f, avg step time %d ms\n" %
+                         (batch, model_loss(train_seq, train_target).numpy(),
+                          time_in_ms))
 
 
 class Datasets(object):
@@ -197,7 +211,7 @@ class Datasets(object):
 
     #permutations
     #combinations
-    comblist = list(permutations([str(1).zfill(2),str(2).zfill(2),str(3).zfill(2),
+    comblist = list(combinations([str(1).zfill(2),str(2).zfill(2),str(3).zfill(2),
             str(4).zfill(2),str(5).zfill(2),str(6).zfill(2),
             str(7).zfill(2),str(8).zfill(2),str(9).zfill(2),
             str(10).zfill(2),str(11).zfill(2)], 5))
@@ -217,7 +231,7 @@ class Datasets(object):
 
   def vocab_size(self):
     print("---------------vocab_size:%d\n" %(len(self.idx2word)))
-    return 11*10*9*8*7 #462
+    return 462 #11*10*9*8*7 #462
 
 
   def add(self, word):
@@ -309,7 +323,7 @@ def main(_):
                      corpus.vocab_size(),
                      FLAGS.embedding_dim,
                      FLAGS.hidden_dim, FLAGS.num_layers, FLAGS.dropout,
-                     use_cudnn_rnn,0.0)
+                     use_cudnn_rnn,1.0)
     #optimizer = tf.train.GradientDescentOptimizer(learning_rate)
     optimizer = tf.train.AdamOptimizer(
         learning_rate,
@@ -361,13 +375,13 @@ if __name__ == "__main__":
   parser.add_argument(
       "--logdir", type=str, default="/home/chris/workspace/rnn_lottery/savedmodel", help="Directory for checkpoint.")
   parser.add_argument("--epoch", type=int, default=80, help="Number of epochs.")
-  parser.add_argument("--batch-size", type=int, default=64, help="Batch size.")
+  parser.add_argument("--batch-size", type=int, default=200, help="Batch size.")
   parser.add_argument(
-      "--seq-len", type=int, default=32, help="Sequence length.")
+      "--seq-len", type=int, default=25, help="Sequence length.")
   parser.add_argument(
-      "--embedding-dim", type=int, default=512, help="Embedding dimension.")
+      "--embedding-dim", type=int, default=1024, help="Embedding dimension.")
   parser.add_argument(
-      "--hidden-dim", type=int, default=512, help="Hidden layer dimension.")
+      "--hidden-dim", type=int, default=1024, help="Hidden layer dimension.")
   parser.add_argument(  
       "--num-layers", type=int, default=2, help="Number of RNN layers.")
   parser.add_argument(
