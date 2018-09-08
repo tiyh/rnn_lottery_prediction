@@ -137,9 +137,30 @@ def loss_fn(model, inputs, targets, training):
   outputs = model(inputs, training=training)
   #sys.stderr.write("-----------------labels %s \n outputs:%s\n" %
   #                 (labels, outputs))
+  accuracy = tfe.metrics.Accuracy()
+  accuracy(tf.argmax(outputs, axis=1), labels)
+  one_accuracy = accuracy.result().numpy()
+  if one_accuracy > 0.0:
+    sys.stderr.write("accuracy:%.4f\n" %
+                   (one_accuracy))
+
+  '''
+  batchsize,NUM_CLASSES = outputs.shape
+  #batch_size = tf.size(labels) # get size of labels : 4
+  one_labels = tf.expand_dims(labels, 1) # 增加一个维度
+  indices = tf.expand_dims(tf.range(0, batchsize,1), 1) #生成索引
+  concated = tf.concat([tf.to_int32(indices), tf.to_int32(one_labels)] , 1) #作为拼接
+  onehot_labels = tf.sparse_to_dense(concated, tf.stack([batchsize, NUM_CLASSES]), 1, 0) # 
+  sys.stderr.write("batchsize:%d--NUM_CLASSES:%d-------onehot_labels:%s----concated:%s----outputs:%s\n" %
+                   (batchsize,NUM_CLASSES,onehot_labels,concated,outputs))
+  accuracy_tensor = tf.contrib.metrics.accuracy(tf.to_int32(onehot_labels),tf.to_int32(outputs))
+  accuracy = tf.reduce_mean(accuracy_tensor)
+  sys.stderr.write("batchsize:%d--NUM_CLASSES:%d-------onehot_labels:%s-----accuracy_tensor:%s---accuracy:%.4f\n" %
+                   (batchsize,NUM_CLASSES,onehot_labels, accuracy_tensor,accuracy))
+  '''
   return tf.reduce_mean(
       tf.nn.sparse_softmax_cross_entropy_with_logits(
-          labels=labels, logits=outputs))
+          labels=labels, logits=outputs)),one_accuracy
 
 
 def _divide_into_batches(data, batch_size):
@@ -160,30 +181,35 @@ def _get_batch(data, i, seq_len):
 def evaluate(model, data):
   """evaluate an epoch."""
   total_loss = 0.0
+  total_accuracy = 0.0
   total_batches = 0
   start = time.time()
   for _, i in enumerate(range(0, data.shape[0] - 1, FLAGS.seq_len)):
     inp, target = _get_batch(data, i, FLAGS.seq_len)
-    loss = loss_fn(model, inp, target, training=False)
+    loss,accuracy = loss_fn(model, inp, target, training=False)
     total_loss += loss.numpy()
+    otal_accuracy += accuracy
     total_batches += 1
   time_in_ms = (time.time() - start) * 1000
-  sys.stderr.write("eval loss %.2f (eval took %d ms)\n" %
-                   (total_loss / total_batches, time_in_ms))
+  sys.stderr.write("eval loss %.2f eval accuracy %.4f(eval took %d ms)\n" %
+                   (total_loss / total_batches, accuracy / total_batches,time_in_ms))
   return total_loss
 
 
 def train(model, optimizer, train_data, sequence_length, clip_ratio):
   """training an epoch."""
 
-  def model_loss(inputs, targets):
-    return loss_fn(model, inputs, targets, training=True)
+  def model_loss(inputs, targets,total):
+    lossfn,accuracy = loss_fn(model, inputs, targets, training=True)
+    total[1] += accuracy
+    total[0] += 1.0
+    return lossfn
 
   grads = tfe.implicit_gradients(model_loss)
-
+  total = [0.0]*2
   total_time = 0
   for batch, i in enumerate(range(0, train_data.shape[0] - 1, sequence_length)):
-    for j in range(sequence_length): 
+    for j in range(0,sequence_length,3): 
       train_seq, train_target = _get_batch(train_data, i+j, sequence_length)
       input_list = tf.unstack(train_seq, num=int(train_seq.shape[0]), axis=0)
       if not input_list: 
@@ -192,13 +218,18 @@ def train(model, optimizer, train_data, sequence_length, clip_ratio):
         break
       start = time.time()
       optimizer.apply_gradients(
-          clip_gradients(grads(train_seq, train_target), clip_ratio))
+          clip_gradients(grads(train_seq, train_target,total), clip_ratio))
       total_time += (time.time() - start)
-      if batch % 10 == 0:
+      if batch % 10 == 0 and j == 0:
         time_in_ms = (total_time * 1000) / (batch + 1)
         sys.stderr.write("batch %d: training loss %.2f, avg step time %d ms\n" %
-                         (batch, model_loss(train_seq, train_target).numpy(),
+                         (batch, model_loss(train_seq, train_target,total).numpy(),
                           time_in_ms))
+        if total[0] > 0.0: 
+          sys.stderr.write("batch %d: training accuracy: %.4f\n" %
+                         (batch, total[1]/total[0]))
+        total[0] = 0.0
+        total[1] =0
 
 
 class Datasets(object):
@@ -323,7 +354,7 @@ def main(_):
                      corpus.vocab_size(),
                      FLAGS.embedding_dim,
                      FLAGS.hidden_dim, FLAGS.num_layers, FLAGS.dropout,
-                     use_cudnn_rnn,1.0)
+                     use_cudnn_rnn,0.0)
     #optimizer = tf.train.GradientDescentOptimizer(learning_rate)
     optimizer = tf.train.AdamOptimizer(
         learning_rate,
@@ -375,17 +406,17 @@ if __name__ == "__main__":
   parser.add_argument(
       "--logdir", type=str, default="/home/chris/workspace/rnn_lottery/savedmodel", help="Directory for checkpoint.")
   parser.add_argument("--epoch", type=int, default=80, help="Number of epochs.")
-  parser.add_argument("--batch-size", type=int, default=200, help="Batch size.")
+  parser.add_argument("--batch-size", type=int, default=5, help="Batch size.")
   parser.add_argument(
-      "--seq-len", type=int, default=25, help="Sequence length.")
+      "--seq-len", type=int, default=15, help="Sequence length.")
   parser.add_argument(
-      "--embedding-dim", type=int, default=1024, help="Embedding dimension.")
+      "--embedding-dim", type=int, default=512, help="Embedding dimension.")
   parser.add_argument(
-      "--hidden-dim", type=int, default=1024, help="Hidden layer dimension.")
+      "--hidden-dim", type=int, default=512, help="Hidden layer dimension.")
   parser.add_argument(  
       "--num-layers", type=int, default=2, help="Number of RNN layers.")
   parser.add_argument(
-      "--dropout", type=float, default=0.5, help="Drop out ratio.")
+      "--dropout", type=float, default=0.3, help="Drop out ratio.")
   parser.add_argument(
       "--clip", type=float, default=0.2, help="Gradient clipping ratio.")
   parser.add_argument(
