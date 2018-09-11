@@ -74,7 +74,7 @@ class Embedding(layers.Layer):
         "embedding_kernel",
         shape=[self.vocab_size, self.embedding_dim],
         dtype=tf.float32,
-        initializer=tf.keras.initializers.he_normal(), #tf.random_uniform_initializer(-0.1, 0.1),
+        initializer=tf.random_uniform_initializer(-0.1, 0.1),#tf.keras.initializers.he_normal(),
         trainable=True)
 
   def call(self, x):
@@ -107,7 +107,7 @@ class LSTMModel(tf.keras.Model):
       self.rnn = RNN(hidden_dim, num_layers, self.keep_ratio,forget_bias)
 
     self.linear = layers.Dense(
-        vocab_size, kernel_initializer=tf.keras.initializers.he_normal()) #tf.random_uniform_initializer(-0.1, 0.1))
+        vocab_size, kernel_initializer=tf.random_uniform_initializer(-0.1, 0.1))#tf.keras.initializers.he_normal()) #tf.random_uniform_initializer(-0.1, 0.1))
     self._output_shape = [-1, embedding_dim]
 
   def call(self, input_seq, training):
@@ -135,32 +135,30 @@ def clip_gradients(grads_and_vars, clip_ratio):
 def loss_fn(model, inputs, targets, training):
   labels = tf.reshape(targets, [-1])
   outputs = model(inputs, training=training)
-  #sys.stderr.write("-----------------labels %s \n outputs:%s\n" %
-  #                 (labels, outputs))
+  s_outputs = tf.nn.softmax(outputs)
+  #sys.stderr.write("------------labels:%s\n -----labels %s \n ------s_outputs:%s\n s_outputs.numpy():%s\n" %
+  #                 (labels,labels.numpy(),s_outputs, s_outputs.numpy()))
   accuracy = tfe.metrics.Accuracy()
-  accuracy(tf.argmax(outputs, axis=1), labels)
+  accuracy(tf.argmax(s_outputs, axis=1), labels)
   one_accuracy = accuracy.result().numpy()
-  if one_accuracy > 0.0:
-    sys.stderr.write("accuracy:%.4f\n" %
-                   (one_accuracy))
+  #if one_accuracy > 0.0:
+  #  sys.stderr.write("accuracy:%.4f\n" %
+  #                 (one_accuracy))
 
   '''
   batchsize,NUM_CLASSES = outputs.shape
-  #batch_size = tf.size(labels) # get size of labels : 4
   one_labels = tf.expand_dims(labels, 1) # 增加一个维度
   indices = tf.expand_dims(tf.range(0, batchsize,1), 1) #生成索引
   concated = tf.concat([tf.to_int32(indices), tf.to_int32(one_labels)] , 1) #作为拼接
   onehot_labels = tf.sparse_to_dense(concated, tf.stack([batchsize, NUM_CLASSES]), 1, 0) # 
-  sys.stderr.write("batchsize:%d--NUM_CLASSES:%d-------onehot_labels:%s----concated:%s----outputs:%s\n" %
-                   (batchsize,NUM_CLASSES,onehot_labels,concated,outputs))
-  accuracy_tensor = tf.contrib.metrics.accuracy(tf.to_int32(onehot_labels),tf.to_int32(outputs))
-  accuracy = tf.reduce_mean(accuracy_tensor)
-  sys.stderr.write("batchsize:%d--NUM_CLASSES:%d-------onehot_labels:%s-----accuracy_tensor:%s---accuracy:%.4f\n" %
-                   (batchsize,NUM_CLASSES,onehot_labels, accuracy_tensor,accuracy))
+  lossfn = tf.reduce_mean(tf.nn.weighted_cross_entropy_with_logits(
+    tf.to_float(onehot_labels), outputs,10))
+  #sys.stderr.write("batchsize:%d--NUM_CLASSES:%d------lossfn:%s\n" %
+  #                 (batchsize,NUM_CLASSES,lossfn))
   '''
-  return tf.reduce_mean(
-      tf.nn.sparse_softmax_cross_entropy_with_logits(
-          labels=labels, logits=outputs)),one_accuracy
+  lossfn = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(
+   labels=labels, logits=outputs))
+  return lossfn,one_accuracy
 
 
 def _divide_into_batches(data, batch_size):
@@ -188,12 +186,14 @@ def evaluate(model, data):
     inp, target = _get_batch(data, i, FLAGS.seq_len)
     loss,accuracy = loss_fn(model, inp, target, training=False)
     total_loss += loss.numpy()
-    otal_accuracy += accuracy
+    total_accuracy += accuracy
     total_batches += 1
+    sys.stderr.write("evaluate---- total_batches:%d loss %.6f accuracy %.8f\n" %
+                   (total_batches,loss.numpy(), accuracy))
   time_in_ms = (time.time() - start) * 1000
-  sys.stderr.write("eval loss %.2f eval accuracy %.4f(eval took %d ms)\n" %
-                   (total_loss / total_batches, accuracy / total_batches,time_in_ms))
-  return total_loss
+  sys.stderr.write("eval loss %.6f eval accuracy %.8f(eval took %d ms)\n" %
+                   (total_loss / total_batches, total_accuracy / total_batches,time_in_ms))
+  return total_loss,total_accuracy / total_batches
 
 
 def train(model, optimizer, train_data, sequence_length, clip_ratio):
@@ -222,11 +222,11 @@ def train(model, optimizer, train_data, sequence_length, clip_ratio):
       total_time += (time.time() - start)
       if batch % 10 == 0 and j == 0:
         time_in_ms = (total_time * 1000) / (batch + 1)
-        sys.stderr.write("batch %d: training loss %.2f, avg step time %d ms\n" %
+        sys.stderr.write("batch %d: training loss %.6f, avg step time %d ms\n" %
                          (batch, model_loss(train_seq, train_target,total).numpy(),
                           time_in_ms))
         if total[0] > 0.0: 
-          sys.stderr.write("batch %d: training accuracy: %.4f\n" %
+          sys.stderr.write("batch %d: training accuracy: %.8f\n" %
                          (batch, total[1]/total[0]))
         total[0] = 0.0
         total[1] =0
@@ -354,7 +354,7 @@ def main(_):
                      corpus.vocab_size(),
                      FLAGS.embedding_dim,
                      FLAGS.hidden_dim, FLAGS.num_layers, FLAGS.dropout,
-                     use_cudnn_rnn,0.0)
+                     use_cudnn_rnn,0.5)
     #optimizer = tf.train.GradientDescentOptimizer(learning_rate)
     optimizer = tf.train.AdamOptimizer(
         learning_rate,
@@ -374,13 +374,15 @@ def main(_):
     checkpoint.restore(tf.train.latest_checkpoint(FLAGS.logdir))
     sys.stderr.write("learning_rate=%f\n" % learning_rate.numpy())
     best_loss = None
+    best_accuracy = 0.0
     for _ in range(FLAGS.epoch):
       train(model, optimizer, train_data, FLAGS.seq_len, FLAGS.clip)
-      eval_loss = evaluate(model, eval_data)
-      if not best_loss or eval_loss < best_loss:
+      eval_loss,eval_accuracy = evaluate(model, eval_data)
+      if not best_loss or eval_loss < best_loss or eval_accuracy > best_accuracy:
         if FLAGS.logdir:
           checkpoint.save(os.path.join(FLAGS.logdir, "ckpt"))
         best_loss = eval_loss
+        best_accuracy = eval_accuracy
         '''
         sys.stderr.write( "model.variables:%s"% (model.variables))
         sess = tf.Session()
@@ -406,9 +408,9 @@ if __name__ == "__main__":
   parser.add_argument(
       "--logdir", type=str, default="/home/chris/workspace/rnn_lottery/savedmodel", help="Directory for checkpoint.")
   parser.add_argument("--epoch", type=int, default=80, help="Number of epochs.")
-  parser.add_argument("--batch-size", type=int, default=5, help="Batch size.")
+  parser.add_argument("--batch-size", type=int, default=10, help="Batch size.")
   parser.add_argument(
-      "--seq-len", type=int, default=15, help="Sequence length.")
+      "--seq-len", type=int, default=30, help="Sequence length.")
   parser.add_argument(
       "--embedding-dim", type=int, default=512, help="Embedding dimension.")
   parser.add_argument(
@@ -416,7 +418,7 @@ if __name__ == "__main__":
   parser.add_argument(  
       "--num-layers", type=int, default=2, help="Number of RNN layers.")
   parser.add_argument(
-      "--dropout", type=float, default=0.3, help="Drop out ratio.")
+      "--dropout", type=float, default=0.1, help="Drop out ratio.")
   parser.add_argument(
       "--clip", type=float, default=0.2, help="Gradient clipping ratio.")
   parser.add_argument(
