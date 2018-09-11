@@ -183,13 +183,19 @@ def evaluate(model, data):
   total_batches = 0
   start = time.time()
   for _, i in enumerate(range(0, data.shape[0] - 1, FLAGS.seq_len)):
-    inp, target = _get_batch(data, i, FLAGS.seq_len)
-    loss,accuracy = loss_fn(model, inp, target, training=False)
-    total_loss += loss.numpy()
-    total_accuracy += accuracy
-    total_batches += 1
+    for j in range(0,FLAGS.seq_len):
+      inp, target = _get_batch(data, i+j, FLAGS.seq_len)
+      a,b = inp.shape
+      if a < FLAGS.seq_len/2:
+        break
+      #sys.stderr.write("evaluate--inp:%s target %s --i:%d,j:%d int(FLAGS.seq_len/FLAGS.batch_size):%d data.shape[0]:%d\n" %
+      #               (inp, target,i,j,int(FLAGS.seq_len/FLAGS.batch_size),data.shape[0]))
+      loss,accuracy = loss_fn(model, inp, target, training=False)
+      total_loss += loss.numpy()
+      total_accuracy += accuracy
+      total_batches += 1
     sys.stderr.write("evaluate---- total_batches:%d loss %.6f accuracy %.8f\n" %
-                   (total_batches,loss.numpy(), accuracy))
+                    (total_batches,loss.numpy(), accuracy))
   time_in_ms = (time.time() - start) * 1000
   sys.stderr.write("eval loss %.6f eval accuracy %.8f(eval took %d ms)\n" %
                    (total_loss / total_batches, total_accuracy / total_batches,time_in_ms))
@@ -211,11 +217,10 @@ def train(model, optimizer, train_data, sequence_length, clip_ratio):
   for batch, i in enumerate(range(0, train_data.shape[0] - 1, sequence_length)):
     for j in range(0,sequence_length,3): 
       train_seq, train_target = _get_batch(train_data, i+j, sequence_length)
-      input_list = tf.unstack(train_seq, num=int(train_seq.shape[0]), axis=0)
-      if not input_list: 
-        sys.stderr.write("-------input_list==None----input_list: %s \n " %
-                   (input_list))
+      a,b = train_seq.shape
+      if a < sequence_length/2:
         break
+      input_list = tf.unstack(train_seq, num=int(train_seq.shape[0]), axis=0)
       start = time.time()
       optimizer.apply_gradients(
           clip_gradients(grads(train_seq, train_target,total), clip_ratio))
@@ -391,7 +396,7 @@ def main(_):
         save_path = saver.save(sess,model_path)
         '''
       else:
-        learning_rate.assign(learning_rate / 2.0)
+        #learning_rate.assign(learning_rate / 2.0)
         sys.stderr.write("eval_loss did not reduce in this epoch, "
                          "changing learning rate to %f for the next epoch\n" %
                          learning_rate.numpy())
