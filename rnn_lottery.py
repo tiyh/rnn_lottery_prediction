@@ -135,11 +135,11 @@ def clip_gradients(grads_and_vars, clip_ratio):
 def loss_fn(model, inputs, targets, training):
   labels = tf.reshape(targets, [-1])
   outputs = model(inputs, training=training)
-  s_outputs = tf.nn.softmax(outputs)
+  #s_outputs = tf.nn.softmax(outputs)
   #sys.stderr.write("------------labels:%s\n -----labels %s \n ------s_outputs:%s\n s_outputs.numpy():%s\n" %
   #                 (labels,labels.numpy(),s_outputs, s_outputs.numpy()))
   accuracy = tfe.metrics.Accuracy()
-  accuracy(tf.argmax(s_outputs, axis=1), labels)
+  accuracy(tf.argmax(outputs, axis=1), labels)
   one_accuracy = accuracy.result().numpy()
   #if one_accuracy > 0.0:
   #  sys.stderr.write("accuracy:%.4f\n" %
@@ -215,7 +215,7 @@ def train(model, optimizer, train_data, sequence_length, clip_ratio):
   total = [0.0]*2
   total_time = 0
   for batch, i in enumerate(range(0, train_data.shape[0] - 1, sequence_length)):
-    for j in range(0,sequence_length,3): 
+    for j in range(0,sequence_length,2): 
       train_seq, train_target = _get_batch(train_data, i+j, sequence_length)
       a,b = train_seq.shape
       if a < sequence_length/2:
@@ -225,7 +225,7 @@ def train(model, optimizer, train_data, sequence_length, clip_ratio):
       optimizer.apply_gradients(
           clip_gradients(grads(train_seq, train_target,total), clip_ratio))
       total_time += (time.time() - start)
-      if batch % 10 == 0 and j == 0:
+      if batch % 10 == 0 and j >= sequence_length-4:
         time_in_ms = (total_time * 1000) / (batch + 1)
         sys.stderr.write("batch %d: training loss %.6f, avg step time %d ms\n" %
                          (batch, model_loss(train_seq, train_target,total).numpy(),
@@ -396,7 +396,7 @@ def main(_):
         save_path = saver.save(sess,model_path)
         '''
       else:
-        #learning_rate.assign(learning_rate / 2.0)
+        learning_rate.assign(learning_rate * 0.95)
         sys.stderr.write("eval_loss did not reduce in this epoch, "
                          "changing learning rate to %f for the next epoch\n" %
                          learning_rate.numpy())
@@ -417,13 +417,13 @@ if __name__ == "__main__":
   parser.add_argument(
       "--seq-len", type=int, default=30, help="Sequence length.")
   parser.add_argument(
-      "--embedding-dim", type=int, default=512, help="Embedding dimension.")
+      "--embedding-dim", type=int, default=256, help="Embedding dimension.")
   parser.add_argument(
-      "--hidden-dim", type=int, default=512, help="Hidden layer dimension.")
+      "--hidden-dim", type=int, default=256, help="Hidden layer dimension.")
   parser.add_argument(  
-      "--num-layers", type=int, default=2, help="Number of RNN layers.")
+      "--num-layers", type=int, default=1, help="Number of RNN layers.")
   parser.add_argument(
-      "--dropout", type=float, default=0.1, help="Drop out ratio.")
+      "--dropout", type=float, default=0.2, help="Drop out ratio.")
   parser.add_argument(
       "--clip", type=float, default=0.2, help="Gradient clipping ratio.")
   parser.add_argument(
