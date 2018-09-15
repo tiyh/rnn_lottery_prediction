@@ -182,18 +182,26 @@ def evaluate(model, data):
   total_accuracy = 0.0
   total_batches = 0
   start = time.time()
-  for _, i in enumerate(range(0, data.shape[0] - 1, FLAGS.seq_len)):
-    for j in range(0,FLAGS.seq_len):
+  #writer = tf.contrib.summary.create_file_writer(FLAGS.logdir)
+  global_step=tf.train.get_or_create_global_step()  # return global step var
+  #writer.set_as_default()
+  for j in range(0,FLAGS.seq_len):
+    for _, i in enumerate(range(0, data.shape[0] - 1, FLAGS.seq_len)):
       inp, target = _get_batch(data, i+j, FLAGS.seq_len)
       a,b = inp.shape
       if a < FLAGS.seq_len/2:
-        break
+        continue
       #sys.stderr.write("evaluate--inp:%s target %s --i:%d,j:%d int(FLAGS.seq_len/FLAGS.batch_size):%d data.shape[0]:%d\n" %
       #               (inp, target,i,j,int(FLAGS.seq_len/FLAGS.batch_size),data.shape[0]))
       loss,accuracy = loss_fn(model, inp, target, training=False)
       total_loss += loss.numpy()
       total_accuracy += accuracy
       total_batches += 1
+    global_step.assign_add(1)
+    with tf.contrib.summary.record_summaries_every_n_global_steps(1):
+        tf.contrib.summary.scalar('eval_acc', accuracy)
+        tf.contrib.summary.scalar('eval_loss',loss.numpy())
+
     sys.stderr.write("evaluate---- total_batches:%d loss %.6f accuracy %.8f\n" %
                     (total_batches,loss.numpy(), accuracy))
   time_in_ms = (time.time() - start) * 1000
@@ -214,21 +222,32 @@ def train(model, optimizer, train_data, sequence_length, clip_ratio):
   grads = tfe.implicit_gradients(model_loss)
   total = [0.0]*2
   total_time = 0
-  for batch, i in enumerate(range(0, train_data.shape[0] - 1, sequence_length)):
-    for j in range(0,sequence_length,2): 
+  #writer = tf.contrib.summary.create_file_writer(FLAGS.logdir)
+  global_step=tf.train.get_or_create_global_step()  # return global step var
+  #writer.set_as_default()
+
+  for j in range(0,sequence_length,2): 
+    for batch, i in enumerate(range(0, train_data.shape[0] - 1, sequence_length)):
+
       train_seq, train_target = _get_batch(train_data, i+j, sequence_length)
       a,b = train_seq.shape
       if a < sequence_length/2:
-        break
+        continue
+
       input_list = tf.unstack(train_seq, num=int(train_seq.shape[0]), axis=0)
       start = time.time()
       optimizer.apply_gradients(
           clip_gradients(grads(train_seq, train_target,total), clip_ratio))
       total_time += (time.time() - start)
-      if batch % 10 == 0 and j >= sequence_length-4:
+      global_step.assign_add(1)
+      with tf.contrib.summary.record_summaries_every_n_global_steps(100):
+        if total[0] > 0.0: 
+          tf.contrib.summary.scalar('train_acc', total[1]/total[0])
+        tf.contrib.summary.scalar('train_loss', model_loss(train_seq, train_target,total).numpy())
+      if batch % 100 == 0 :#and i >= train_data.shape[0] -5:
         time_in_ms = (total_time * 1000) / (batch + 1)
-        sys.stderr.write("batch %d: training loss %.6f, avg step time %d ms\n" %
-                         (batch, model_loss(train_seq, train_target,total).numpy(),
+        sys.stderr.write("batch %d,i:%d: training loss %.6f, avg step time %d ms\n" %
+                         (batch,i, model_loss(train_seq, train_target,total).numpy(),
                           time_in_ms))
         if total[0] > 0.0: 
           sys.stderr.write("batch %d: training accuracy: %.8f\n" %
@@ -311,7 +330,18 @@ def predict(self):
                      FLAGS.hidden_dim, FLAGS.num_layers, 0,
                      False,0)
   #optimizer = tf.train.GradientDescentOptimizer(learning_rate)
-  checkpoint = tf.train.Checkpoint(model=model)
+  optimizer = tf.train.AdamOptimizer(
+        learning_rate,
+        beta1=0.9,
+        beta2=0.999,
+        epsilon=1e-08,
+        use_locking=False,
+        name='Adam'
+  )
+  #checkpoint = tf.train.Checkpoint(model=model)
+  checkpoint = tfe.Checkpoint(optimizer=optimizer,
+                      model=model,
+                      optimizer_step=tf.train.get_or_create_global_step())
 
   checkpoint.restore(tf.train.latest_checkpoint(FLAGS.logdir))
   sys.stderr.write( "train_data--------------------------- :%s \n"% train_data )
@@ -368,21 +398,35 @@ def main(_):
         epsilon=1e-08,
         use_locking=False,
         name='Adam'
-      )
-    checkpoint = tf.train.Checkpoint(
+    )
+    checkpoint = tfe.Checkpoint(optimizer=optimizer,
+                      model=model,
+                      optimizer_step=tf.train.get_or_create_global_step())
+
+    '''
+    = tf.train.Checkpoint(
         learning_rate=learning_rate, model=model,
         # GradientDescentOptimizer has no state to checkpoint, but noting it
         # here lets us swap in an optimizer that does.
         optimizer=optimizer)
+    '''
     # Restore existing variables now (learning_rate), and restore new variables
     # on creation if a checkpoint exists.
     checkpoint.restore(tf.train.latest_checkpoint(FLAGS.logdir))
     sys.stderr.write("learning_rate=%f\n" % learning_rate.numpy())
     best_loss = None
     best_accuracy = 0.0
+    writer = tf.contrib.summary.create_file_writer(FLAGS.logdir)
+    global_step=tf.train.get_or_create_global_step()  # return global step var
+    writer.set_as_default()
+
     for _ in range(FLAGS.epoch):
       train(model, optimizer, train_data, FLAGS.seq_len, FLAGS.clip)
       eval_loss,eval_accuracy = evaluate(model, eval_data)
+      global_step.assign_add(1)
+      with tf.contrib.summary.record_summaries_every_n_global_steps(1):
+        tf.contrib.summary.scalar('epoch_acc', eval_accuracy)
+        tf.contrib.summary.scalar('epoch_loss',eval_loss)
       if not best_loss or eval_loss < best_loss or eval_accuracy > best_accuracy:
         if FLAGS.logdir:
           checkpoint.save(os.path.join(FLAGS.logdir, "ckpt"))
